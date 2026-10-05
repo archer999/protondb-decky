@@ -1,0 +1,48 @@
+name: Release Decky Plugin
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build plugin
+        run: pnpm build
+
+      - name: Prepare release package
+        run: |
+          mkdir -p release
+          cp plugin.json release/
+          cp -R dist release/
+          cd release
+          zip -r ../protondb-decky-${{ github.ref_name }}.zip .
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: protondb-decky-${{ github.ref_name }}.zip
+          generate_release_notes: true
