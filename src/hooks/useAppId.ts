@@ -10,14 +10,36 @@ function cleanString(str: string) {
     .trim()
 }
 
+function parseRouteAppId(): string | undefined {
+  const params = (useParams as any)?.() ?? {}
+  const candidates = [
+    params?.appid,
+    params?.appId,
+    params?.gameid,
+    params?.id,
+    params?.app_id,
+    params?.game_id
+  ]
+
+  const fromParams = candidates.find((value) => typeof value === 'string' && value.length > 0)
+  if (fromParams) {
+    return fromParams
+  }
+
+  const pathMatch = window.location.pathname.match(/(?:\/|^)(\d+)(?:\/|$)/)
+  return pathMatch?.[1]
+}
+
 const useAppId = () => {
   const [appId, setAppId] = useState<string>()
-  const { appid: pathId } = useParams<{ appid: string }>()
+  const routeAppId = parseRouteAppId()
 
   useEffect(() => {
     let ignore = false
-    async function getNonSteamAppId(gameName: string) {
-      if (ignore) {
+
+    async function getNonSteamAppId(gameName?: string) {
+      if (ignore || !gameName?.length) {
+        setAppId(undefined)
         return
       }
 
@@ -27,37 +49,58 @@ const useAppId = () => {
           {
             method: 'GET'
           }
-        );
-    
+        )
+
         if (res.status === 200) {
-          const options = await res.json() as {
+          const options = (await res.json()) as {
             appid: string
             name: string
           }[]
-          const appId = options.find((o) => {
+          const foundAppId = options.find((o) => {
             return cleanString(o.name) === cleanString(gameName)
           })?.appid
-          setAppId(appId)
+          if (!ignore) {
+            setAppId(foundAppId)
+          }
           return
         }
       } catch (error) {
-       console.error(error); 
+        console.error(error)
       }
+
+      if (!ignore) {
+        setAppId(undefined)
+      }
+    }
+
+    const targetAppId = routeAppId
+    if (!targetAppId) {
       setAppId(undefined)
+      return
     }
-    const appDetails = appStore.GetAppOverviewByGameID(parseInt(pathId))
+
+    const appOverview =
+      typeof appStore !== 'undefined'
+        ? appStore.GetAppOverviewByGameID(parseInt(targetAppId, 10))
+        : undefined
     const isSteamGame = Boolean(
-      appTypes[appDetails?.app_type as keyof typeof appTypes]
+      appTypes[appOverview?.app_type as keyof typeof appTypes]
     )
+
     if (isSteamGame) {
-      setAppId(pathId)
-    } else {
-      getNonSteamAppId(appDetails?.display_name)
+      if (!ignore) {
+        setAppId(targetAppId)
+      }
+      return
     }
+
+    getNonSteamAppId(appOverview?.display_name)
+
     return () => {
       ignore = true
     }
-  }, [])
+  }, [routeAppId])
+
   return appId
 }
 

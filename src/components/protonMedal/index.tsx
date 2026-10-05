@@ -29,32 +29,49 @@ const positonSettings = {
 }
 
 function findTopCapsuleParent(ref: HTMLDivElement | null): Element | null {
-  const children = ref?.parentElement?.children
-  if (!children) {
+  const root = ref?.parentElement
+  if (!root) {
     return null
   }
 
-  let headerContainer: Element | undefined
-  for (const child of children) {
-    if (child.className.includes(appDetailsClasses.Header)) {
-      headerContainer = child
-      break
+  const walk = (node: Element | null): Element | null => {
+    if (!node) {
+      return null
     }
-  }
 
-  if (!headerContainer) {
+    const className = typeof node.className === 'string' ? node.className : ''
+    const isHeaderLike =
+      className.includes(appDetailsClasses.Header) ||
+      className.includes('Header') ||
+      className.includes('AppDetailsHeader') ||
+      className.includes('LibraryAppDetails')
+
+    if (isHeaderLike) {
+      for (const child of Array.from(node.children)) {
+        const childClassName = typeof child.className === 'string' ? child.className : ''
+        const isCapsuleLike =
+          childClassName.includes(appDetailsHeaderClasses.TopCapsule) ||
+          childClassName.includes('TopCapsule') ||
+          childClassName.includes('Capsule') ||
+          childClassName.includes('HeaderImage')
+
+        if (isCapsuleLike) {
+          return child
+        }
+      }
+    }
+
+    for (const child of Array.from(node.children)) {
+      const nested = walk(child)
+      if (nested) {
+        return nested
+      }
+    }
+
     return null
   }
 
-  let topCapsule: Element | null = null
-  for (const child of headerContainer.children) {
-    if (child.className.includes(appDetailsHeaderClasses.TopCapsule)) {
-      topCapsule = child
-      break
-    }
-  }
-
-  return topCapsule
+  return walk(root)
 }
 
 export default function ProtonMedal(): ReactElement {
