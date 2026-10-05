@@ -29,3 +29,5 @@ corepack pnpm build
 
 This is a personal fork, kept working for the latest Steam Deck / SteamOS versions with the same core functionality and compatibility fixes.
 
+Original plugin creator credit: OMGDuke / ProtonDB Badges original project.
+
