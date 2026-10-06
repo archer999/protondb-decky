@@ -1,18 +1,39 @@
 import os
+
 import decky_plugin
+
 from settings import SettingsManager
 
+
 class Plugin:
+    def __init__(self):
+        self.settings = None
+
     async def _main(self):
-         self.settings = SettingsManager(name="config", settings_directory=decky_plugin.DECKY_PLUGIN_SETTINGS_DIR)
+        settings_directory = getattr(
+            decky_plugin,
+            'DECKY_PLUGIN_SETTINGS_DIR',
+            os.path.join(os.path.dirname(__file__), 'settings')
+        )
+        if not settings_directory:
+            settings_directory = os.path.join(os.path.dirname(__file__), 'settings')
+
+        self.settings = SettingsManager(
+            name='config',
+            settings_directory=settings_directory
+        )
 
     async def _unload(self):
         pass
 
     async def set_setting(self, key, value):
-        self.settings.setSetting(key, value)
+        if self.settings is None:
+            await self._main()
+        return self.settings.setSetting(key, value)
 
     async def get_setting(self, key, default):
+        if self.settings is None:
+            await self._main()
         return self.settings.getSetting(key, default)
 
     async def get_system_info(self):
