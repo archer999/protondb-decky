@@ -35,14 +35,15 @@ jobs:
 
       - name: Prepare release package
         run: |
+          rm -rf release
           mkdir -p release
           cp plugin.json release/
-          cp dist/index.js release/
-          cp dist/index.js.map release/
-          cp dist/tsconfig.tsbuildinfo release/
+          cp main.py release/
+          cp settings.py release/
           cp -R dist release/
+          cp -R assets release/
           cd release
-          zip -r ../protondb-decky-${{ github.ref_name }}.zip plugin.json index.js index.js.map tsconfig.tsbuildinfo dist
+          zip -r ../protondb-decky-${{ github.ref_name }}.zip .
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
