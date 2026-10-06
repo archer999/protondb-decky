@@ -37,15 +37,7 @@ jobs:
         run: pnpm build
 
       - name: Prepare release package
-        run: |
-          rm -rf ./release
-          mkdir -p ./release
-          cp LICENSE ./release/
-          cp plugin.json ./release/
-          cp main.py ./release/
-          cp settings.py ./release/
-          cp -R dist ./release/
-          cp -R assets ./release/
+        run: ./scripts/package-release.sh
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4

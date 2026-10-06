@@ -35,13 +35,7 @@ jobs:
 
       - name: Prepare release package
         run: |
-          rm -rf release
-          mkdir -p release
-          cp plugin.json release/
-          cp main.py release/
-          cp settings.py release/
-          cp -R dist release/
-          cp -R assets release/
+          ./scripts/package-release.sh
           cd release
           zip -r ../protondb-decky-${{ github.ref_name }}.zip .
 
