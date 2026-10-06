@@ -1,0 +1,1343 @@
+import {
+  ConfirmModal,
+  Focusable,
+  Navigation,
+  ScrollPanelGroup,
+  ScrollPanel
+} from '@decky/ui'
+import React, {
+  CSSProperties,
+  FC,
+  ReactNode,
+  useEffect,
+  useMemo,
+  useState
+} from 'react'
+import {
+  GatewayAnalysis,
+  ReportHistory,
+  RecentReport,
+  RecentReportsResponse,
+  ProtonVersionsResponse,
+  ProtonVersionStat as GwVersionStat,
+  SettingsTipsResponse,
+  LaunchOptionStat
+} from '../../../types/gateway'
+import {
+  getReportHistory,
+  getRecentReports,
+  getProtonVersions,
+  getSettingsTips
+} from '../../actions/gateway'
+import {
+  getCachedReports,
+  setCachedReports,
+  getCachedVersions,
+  setCachedVersions
+} from '../../cache/protobDbCache'
+import ReportChart from './ReportChart'
+import useTranslations from '../../hooks/useTranslations'
+import {
+  getCurrentLaunchOptions,
+  setLaunchOptions,
+  buildMergedOptions
+} from '../../utils/steamLaunchOptions'
+import {
+  getInstalledCompatTools,
+  findMatchingTool,
+  applyCompatTool,
+  getCurrentCompatTool,
+  isDowngrade,
+  lastDebugInfo
+} from '../../utils/compatTools'
+
+const CURRENT_PROTON_MAJOR = '10'
+
+interface AnalysisModalProps {
+  analysis: GatewayAnalysis
+  appId: string
+  closeModal?: () => void
+}
+
+const TREND_ICONS: Record<string, string> = {
+  improving: '🟢',
+  declining: '🔴',
+  stable: '⚪',
+  unknown: '❓'
+}
+
+const WORKING_STATUS_ICONS: Record<string, string> = {
+  working: '✅',
+  not_working: '❌',
+  unknown: '❓'
+}
+
+function formatPercent(ratio: number | undefined): string {
+  if (ratio === undefined || ratio === null) return '—'
+  return `${(ratio * 100).toFixed(1)}%`
+}
+
+const rowStyle = (even: boolean): CSSProperties => ({
+  display: 'flex',
+  background: even ? 'rgba(255,255,255,0.04)' : 'transparent',
+  fontSize: '13px',
+  color: '#e0e0e0'
+})
+
+const labelStyle = (sub: boolean): CSSProperties => ({
+  padding: sub ? '6px 10px 6px 20px' : '6px 10px',
+  fontWeight: 'bold',
+  color: sub ? '#888888' : '#c0c0c0',
+  width: '220px',
+  minWidth: '220px',
+  flexShrink: 0
+})
+
+const valueStyle: CSSProperties = {
+  padding: '6px 10px',
+  flex: 1
+}
+
+type RowProps = {
+  label: string
+  value: ReactNode
+  even: boolean
+  sub?: boolean
+}
+
+const Row: FC<RowProps> = ({ label, value, even, sub }) => (
+  <div style={rowStyle(even)}>
+    <div style={labelStyle(!!sub)}>{label}</div>
+    <div style={valueStyle}>{value}</div>
+  </div>
+)
+
+const tabStyle = (active: boolean): CSSProperties => ({
+  flex: 1,
+  padding: '8px 0',
+  textAlign: 'center',
+  fontSize: '13px',
+  fontWeight: 'bold',
+  color: active ? '#fff' : '#888',
+  background: active ? 'rgba(255,255,255,0.1)' : 'transparent',
+  borderBottom: active ? '2px solid #7ab3f0' : '2px solid transparent',
+  cursor: 'pointer',
+  border: 'none',
+  borderRadius: 0
+})
+
+function formatDate(timestamp: number): string {
+  const d = new Date(timestamp * 1000)
+  return d.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  })
+}
+
+function isPositiveRating(rating: string): boolean {
+  return rating === 'Gold' || rating === 'Platinum' || rating === 'Silver'
+}
+
+const ReportCard: FC<{ report: RecentReport }> = ({ report }) => {
+  const positive = isPositiveRating(report.rating)
+  const color = positive ? '#4ade80' : '#f87171'
+  const label = positive ? '👍 Works' : '👎 Issues'
+
+  return (
+    <div
+      style={{
+        background: 'rgba(255,255,255,0.04)',
+        borderRadius: '6px',
+        padding: '10px 12px',
+        marginBottom: '8px',
+        borderLeft: `3px solid ${color}`
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          marginBottom: '4px'
+        }}
+      >
+        <span
+          style={{
+            fontWeight: 'bold',
+            color,
+            fontSize: '13px'
+          }}
+        >
+          {label}
+        </span>
+        <span style={{ color: '#888', fontSize: '11px' }}>
+          {formatDate(report.timestamp)}
+        </span>
+      </div>
+      <div
+        style={{
+          fontSize: '11px',
+          color: '#aaa',
+          marginBottom: '4px',
+          textAlign: 'right'
+        }}
+      >
+        {[
+          report.os ? `OS: ${report.os}` : null,
+          report.proton_version ? `Proton: ${report.proton_version}` : null,
+          report.is_steam_deck ? 'Steam Deck' : null
+        ]
+          .filter(Boolean)
+          .join(' · ') || '—'}
+      </div>
+      <div
+        style={{
+          fontSize: '12px',
+          color: report.notes ? '#ccc' : '#666',
+          lineHeight: '1.4',
+          fontStyle: 'italic'
+        }}
+      >
+        {report.notes
+          ? report.notes.length > 200
+            ? report.notes.slice(0, 200) + '…'
+            : report.notes
+          : 'No remarks shared'}
+      </div>
+    </div>
+  )
+}
+
+function ratioColor(ratio: number): string {
+  if (ratio >= 0.75) return '#4ade80'
+  if (ratio >= 0.5) return '#facc15'
+  return '#f87171'
+}
+
+function isCurrent(version: string): boolean {
+  return (
+    version === `Proton ${CURRENT_PROTON_MAJOR}` ||
+    version === 'Proton Official'
+  )
+}
+
+function copyToClipboard(text: string): void {
+  try {
+    const input = document.createElement('input')
+    input.value = text
+    input.style.position = 'absolute'
+    input.style.left = '-9999px'
+    document.body.appendChild(input)
+    input.focus()
+    input.select()
+    document.execCommand('copy')
+    document.body.removeChild(input)
+  } catch {
+    try {
+      navigator.clipboard.writeText(text)
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+}
+
+const SettingRow: FC<{ opt: LaunchOptionStat; appId: string }> = ({
+  opt,
+  appId
+}) => {
+  if (!opt?.option || typeof opt.value !== 'string') return null
+  const count = typeof opt.count === 'number' ? opt.count : 0
+  const total =
+    typeof opt.total_with_options === 'number' ? opt.total_with_options : 0
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0
+  const text = `${opt.option}=${opt.value}`
+  const [copied, setCopied] = useState(false)
+  const [applyState, setApplyState] = useState<'idle' | 'conflict' | 'applied'>(
+    'idle'
+  )
+  const [currentOptions, setCurrentOptions] = useState('')
+
+  const handleApply = async () => {
+    try {
+      const numericId = parseInt(appId, 10)
+      if (isNaN(numericId)) return
+      const current = await getCurrentLaunchOptions(numericId)
+      if (!current.trim()) {
+        setLaunchOptions(numericId, text)
+        setApplyState('applied')
+        setTimeout(() => setApplyState('idle'), 2000)
+      } else {
+        setCurrentOptions(current)
+        setApplyState('conflict')
+      }
+    } catch {
+      setApplyState('idle')
+    }
+  }
+
+  const resolveConflict = (mode: 'append' | 'replace') => {
+    try {
+      const numericId = parseInt(appId, 10)
+      if (isNaN(numericId)) return
+      const merged = buildMergedOptions(currentOptions, text, mode)
+      setLaunchOptions(numericId, merged)
+      setApplyState('applied')
+      setTimeout(() => setApplyState('idle'), 2000)
+    } catch {
+      setApplyState('idle')
+    }
+  }
+
+  return (
+    <div
+      style={{
+        background: 'rgba(255,255,255,0.04)',
+        borderRadius: '6px',
+        padding: '8px 12px',
+        marginBottom: '6px',
+        borderLeft: '3px solid rgba(255,255,255,0.12)'
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '2px'
+        }}
+      >
+        <span
+          style={{
+            fontWeight: 'bold',
+            fontSize: '12px',
+            color: '#e0e0e0',
+            fontFamily: 'monospace',
+            flex: 1
+          }}
+        >
+          {text}
+        </span>
+        <Focusable
+          style={{
+            padding: '4px 10px',
+            fontSize: '11px',
+            color: applyState === 'applied' ? '#4ade80' : '#7dd3fc',
+            cursor: 'pointer',
+            background: 'rgba(255,255,255,0.06)',
+            borderRadius: '4px',
+            marginLeft: '8px',
+            whiteSpace: 'nowrap',
+            outline: 'none',
+            border: 'none'
+          }}
+          onClick={handleApply}
+          onActivate={handleApply}
+          //@ts-ignore
+          focusClassName=""
+        >
+          {applyState === 'applied' ? '✓ Applied' : 'Apply'}
+        </Focusable>
+        <Focusable
+          style={{
+            padding: '4px 10px',
+            fontSize: '11px',
+            color: copied ? '#4ade80' : '#aaa',
+            cursor: 'pointer',
+            background: 'rgba(255,255,255,0.06)',
+            borderRadius: '4px',
+            marginLeft: '4px',
+            whiteSpace: 'nowrap',
+            outline: 'none',
+            border: 'none'
+          }}
+          onClick={() => {
+            copyToClipboard(text)
+            setCopied(true)
+            setTimeout(() => setCopied(false), 2000)
+          }}
+          onActivate={() => {
+            copyToClipboard(text)
+            setCopied(true)
+            setTimeout(() => setCopied(false), 2000)
+          }}
+          //@ts-ignore
+          focusClassName=""
+        >
+          {copied ? '✓' : 'Copy'}
+        </Focusable>
+      </div>
+      {applyState === 'conflict' && (
+        <div
+          style={{
+            marginTop: '6px',
+            padding: '6px 8px',
+            background: 'rgba(255,255,255,0.06)',
+            borderRadius: '4px',
+            fontSize: '10px'
+          }}
+        >
+          <div style={{ color: '#facc15', marginBottom: '4px' }}>
+            Game already has launch options:
+          </div>
+          <div
+            style={{
+              color: '#aaa',
+              fontFamily: 'monospace',
+              marginBottom: '6px',
+              wordBreak: 'break-all'
+            }}
+          >
+            {currentOptions}
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <Focusable
+              style={{
+                padding: '3px 8px',
+                fontSize: '10px',
+                color: '#4ade80',
+                cursor: 'pointer',
+                background: 'rgba(74,222,128,0.1)',
+                borderRadius: '3px',
+                outline: 'none',
+                border: 'none'
+              }}
+              onClick={() => resolveConflict('append')}
+              onActivate={() => resolveConflict('append')}
+              //@ts-ignore
+              focusClassName=""
+            >
+              Add to existing
+            </Focusable>
+            <Focusable
+              style={{
+                padding: '3px 8px',
+                fontSize: '10px',
+                color: '#f87171',
+                cursor: 'pointer',
+                background: 'rgba(248,113,113,0.1)',
+                borderRadius: '3px',
+                outline: 'none',
+                border: 'none'
+              }}
+              onClick={() => resolveConflict('replace')}
+              onActivate={() => resolveConflict('replace')}
+              //@ts-ignore
+              focusClassName=""
+            >
+              Replace all
+            </Focusable>
+            <Focusable
+              style={{
+                padding: '3px 8px',
+                fontSize: '10px',
+                color: '#aaa',
+                cursor: 'pointer',
+                background: 'rgba(255,255,255,0.06)',
+                borderRadius: '3px',
+                outline: 'none',
+                border: 'none'
+              }}
+              onClick={() => setApplyState('idle')}
+              onActivate={() => setApplyState('idle')}
+              //@ts-ignore
+              focusClassName=""
+            >
+              Cancel
+            </Focusable>
+          </div>
+        </div>
+      )}
+      <div style={{ fontSize: '10px', color: '#666' }}>
+        {count} report{count !== 1 ? 's' : ''} ({pct}%)
+      </div>
+    </div>
+  )
+}
+
+const NON_APPLICABLE_VERSIONS = ['other', 'unknown']
+
+const VersionRow: FC<{ stat: GwVersionStat; appId: string }> = ({
+  stat,
+  appId
+}) => {
+  if (!stat?.version) return null
+  const current = isCurrent(stat.version)
+  const canApply =
+    typeof stat.version === 'string' &&
+    !NON_APPLICABLE_VERSIONS.includes(stat.version.toLowerCase().trim())
+  const ratio = Number.isFinite(stat.positive_ratio) ? stat.positive_ratio : 0
+  const color = ratioColor(ratio)
+  const pct = Math.round(ratio * 100)
+  const barWidth = `${Math.min(100, Math.max(0, pct))}%`
+  const ts =
+    typeof stat.latest_timestamp === 'number' ? stat.latest_timestamp : 0
+  const age = ts > 0 ? Math.round((Date.now() / 1000 - ts) / 86400) : -1
+  const [applyState, setApplyState] = useState<
+    'idle' | 'applied' | 'not_found' | 'confirm_downgrade'
+  >('idle')
+  const [pendingTool, setPendingTool] = useState<{
+    toolName: string
+    displayName: string
+  } | null>(null)
+
+  const handleApplyVersion = async () => {
+    try {
+      const numericId = parseInt(appId, 10)
+      if (isNaN(numericId)) return
+      const tools = await getInstalledCompatTools()
+      const match = findMatchingTool(stat.version, tools)
+      if (!match) {
+        setApplyState('not_found')
+        setTimeout(() => setApplyState('idle'), 5000)
+        return
+      }
+      const currentTool = await getCurrentCompatTool(numericId)
+      if (currentTool && isDowngrade(currentTool, match.displayName)) {
+        setPendingTool(match)
+        setApplyState('confirm_downgrade')
+        return
+      }
+      const success = applyCompatTool(numericId, match.toolName)
+      if (success) {
+        setApplyState('applied')
+        setTimeout(() => setApplyState('idle'), 2000)
+      }
+    } catch {
+      setApplyState('idle')
+    }
+  }
+
+  const confirmDowngrade = () => {
+    if (!pendingTool) return
+    const numericId = parseInt(appId, 10)
+    if (isNaN(numericId)) return
+    const success = applyCompatTool(numericId, pendingTool.toolName)
+    if (success) {
+      setApplyState('applied')
+      setTimeout(() => setApplyState('idle'), 2000)
+    } else {
+      setApplyState('idle')
+    }
+    setPendingTool(null)
+  }
+
+  return (
+    <div
+      style={{
+        background: current
+          ? 'rgba(122,179,240,0.10)'
+          : 'rgba(255,255,255,0.04)',
+        borderRadius: '6px',
+        padding: '8px 12px',
+        marginBottom: '6px',
+        borderLeft: current
+          ? '3px solid #7ab3f0'
+          : '3px solid rgba(255,255,255,0.12)'
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '4px'
+        }}
+      >
+        <span
+          style={{
+            fontWeight: 'bold',
+            fontSize: '13px',
+            color: current ? '#7ab3f0' : '#e0e0e0',
+            flex: 1
+          }}
+        >
+          {stat.version}
+          {current && (
+            <span
+              style={{
+                fontSize: '10px',
+                color: '#7ab3f0',
+                marginLeft: '6px',
+                fontWeight: 'normal'
+              }}
+            >
+              ★ Steam Deck default
+            </span>
+          )}
+        </span>
+        {canApply && applyState === 'confirm_downgrade' ? (
+          <>
+            <span
+              style={{
+                fontSize: '9px',
+                color: '#facc15',
+                marginLeft: '6px'
+              }}
+            >
+              Older version — may break game
+            </span>
+            <Focusable
+              style={{
+                padding: '3px 8px',
+                fontSize: '10px',
+                color: '#f87171',
+                cursor: 'pointer',
+                background: 'rgba(248,113,113,0.15)',
+                borderRadius: '4px',
+                marginLeft: '6px',
+                whiteSpace: 'nowrap',
+                outline: 'none',
+                border: 'none'
+              }}
+              onClick={confirmDowngrade}
+              onActivate={confirmDowngrade}
+              //@ts-ignore
+              focusClassName=""
+            >
+              Downgrade anyway
+            </Focusable>
+            <Focusable
+              style={{
+                padding: '3px 8px',
+                fontSize: '10px',
+                color: '#aaa',
+                cursor: 'pointer',
+                background: 'rgba(255,255,255,0.06)',
+                borderRadius: '4px',
+                marginLeft: '4px',
+                whiteSpace: 'nowrap',
+                outline: 'none',
+                border: 'none'
+              }}
+              onClick={() => setApplyState('idle')}
+              onActivate={() => setApplyState('idle')}
+              //@ts-ignore
+              focusClassName=""
+            >
+              Cancel
+            </Focusable>
+          </>
+        ) : canApply ? (
+          <Focusable
+            style={{
+              padding: '3px 8px',
+              fontSize: '10px',
+              color:
+                applyState === 'applied'
+                  ? '#4ade80'
+                  : applyState === 'not_found'
+                    ? '#f87171'
+                    : '#7dd3fc',
+              cursor: 'pointer',
+              background: 'rgba(255,255,255,0.06)',
+              borderRadius: '4px',
+              marginLeft: '6px',
+              whiteSpace: 'nowrap',
+              outline: 'none',
+              border: 'none'
+            }}
+            onClick={handleApplyVersion}
+            onActivate={handleApplyVersion}
+            //@ts-ignore
+            focusClassName=""
+          >
+            {applyState === 'applied'
+              ? '✓ Set'
+              : applyState === 'not_found'
+                ? 'Not installed'
+                : 'Use'}
+          </Focusable>
+        ) : null}
+        <span style={{ color: '#aaa', fontSize: '11px', marginLeft: '6px' }}>
+          {stat.total_reports} report{stat.total_reports !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}
+      >
+        <div
+          style={{
+            flex: 1,
+            height: '6px',
+            background: 'rgba(255,255,255,0.08)',
+            borderRadius: '3px',
+            overflow: 'hidden'
+          }}
+        >
+          <div
+            style={{
+              width: barWidth,
+              height: '100%',
+              background: color,
+              borderRadius: '3px',
+              transition: 'width 0.3s ease'
+            }}
+          />
+        </div>
+        <span style={{ fontSize: '11px', color, minWidth: '32px' }}>
+          {pct}%
+        </span>
+      </div>
+
+      <div
+        style={{
+          fontSize: '10px',
+          color: '#666',
+          marginTop: '2px'
+        }}
+      >
+        Latest: {age < 0 ? '—' : age === 0 ? 'today' : `${age}d ago`}
+      </div>
+      {applyState === 'not_found' && lastDebugInfo && (
+        <div
+          style={{
+            fontSize: '9px',
+            color: '#f87171',
+            marginTop: '2px',
+            wordBreak: 'break-all'
+          }}
+        >
+          Debug: {lastDebugInfo}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function AnalysisModal({
+  analysis,
+  appId,
+  closeModal
+}: AnalysisModalProps) {
+  const t = useTranslations()
+  const confidence = {
+    score: analysis.confidence?.score ?? 0,
+    level: analysis.confidence?.level ?? 'none',
+    factors: Array.isArray(analysis.confidence?.factors)
+      ? analysis.confidence.factors
+      : []
+  }
+  const freshness = {
+    latest_report_age: analysis.freshness?.latest_report_age ?? 0,
+    label: analysis.freshness?.label ?? 'unknown',
+    is_stale: analysis.freshness?.is_stale ?? true
+  }
+  const trend = {
+    direction: analysis.trend?.direction ?? 'unknown',
+    recent_positive_ratio: analysis.trend?.recent_positive_ratio,
+    older_positive_ratio: analysis.trend?.older_positive_ratio
+  }
+  const stats = {
+    total_reports: analysis.stats?.total_reports ?? 0,
+    recent_reports: analysis.stats?.recent_reports ?? 0
+  }
+  const working_status = analysis.working_status
+  const [gameName, setGameName] = useState<string>('—')
+  const [activeTab, setActiveTab] = useState<
+    'details' | 'chart' | 'reports' | 'versions' | 'settings'
+  >('details')
+  const [history, setHistory] = useState<ReportHistory | undefined>()
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [recentReports, setRecentReports] = useState<
+    RecentReportsResponse | undefined
+  >()
+  const [reportsLoading, setReportsLoading] = useState(false)
+  const [versionsData, setVersionsData] = useState<
+    ProtonVersionsResponse | undefined
+  >()
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [settingsData, setSettingsData] = useState<
+    SettingsTipsResponse | undefined
+  >()
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  const REPORTS_PAGE_SIZE = 5
+  const [visibleReports, setVisibleReports] = useState(REPORTS_PAGE_SIZE)
+
+  useEffect(() => {
+    try {
+      const overview = (window as any).appStore?.GetAppOverviewByAppID?.(
+        parseInt(appId)
+      )
+      if (overview?.display_name) setGameName(overview.display_name)
+    } catch {
+      /* ignore */
+    }
+  }, [appId])
+
+  useEffect(() => {
+    if (activeTab === 'reports' && !history && !historyLoading) {
+      setHistoryLoading(true)
+      getReportHistory(appId)
+        .then((data) => {
+          setHistory(data)
+          setHistoryLoading(false)
+        })
+        .catch(() => {
+          setHistoryLoading(false)
+        })
+    }
+    if (activeTab === 'reports' && !recentReports && !reportsLoading) {
+      setReportsLoading(true)
+      getCachedReports(appId)
+        .then((cached) => {
+          if (cached?.reports?.length) {
+            setRecentReports(cached)
+            setReportsLoading(false)
+            return null
+          }
+          return getRecentReports(appId)
+        })
+        .then((fresh) => {
+          if (fresh === null) return
+          if (fresh?.reports?.length) {
+            setCachedReports(appId, fresh)
+          }
+          setRecentReports(fresh ?? undefined)
+          setReportsLoading(false)
+        })
+        .catch(() => {
+          setReportsLoading(false)
+        })
+    }
+    if (activeTab === 'versions' && !versionsData && !versionsLoading) {
+      setVersionsLoading(true)
+      getCachedVersions(appId)
+        .then((cached) => {
+          if (cached?.versions?.length) {
+            setVersionsData(cached)
+            setVersionsLoading(false)
+            return null
+          }
+          return getProtonVersions(appId)
+        })
+        .then((fresh) => {
+          if (fresh === null) return
+          if (fresh?.versions?.length) {
+            setCachedVersions(appId, fresh)
+          }
+          setVersionsData(fresh ?? undefined)
+          setVersionsLoading(false)
+        })
+        .catch(() => {
+          setVersionsLoading(false)
+        })
+    }
+    if (activeTab === 'settings' && !settingsData && !settingsLoading) {
+      setSettingsLoading(true)
+      getSettingsTips(appId)
+        .then((data) => {
+          setSettingsData(data ?? undefined)
+          setSettingsLoading(false)
+        })
+        .catch(() => {
+          setSettingsLoading(false)
+        })
+    }
+  }, [activeTab])
+
+  const trendIcon = TREND_ICONS[trend.direction] ?? '❓'
+  const workingIcon = working_status
+    ? (WORKING_STATUS_ICONS[working_status.status] ?? '❓')
+    : '❓'
+
+  const rows: Array<{ label: string; value: ReactNode; sub?: boolean }> = [
+    { label: 'Game name', value: gameName },
+    { label: 'Game App ID', value: appId },
+    {
+      label: 'Working status',
+      value: working_status?.status
+        ? `${workingIcon} ${working_status.status.replace('_', ' ')} (${working_status.confidence ?? 'unknown'} certainty)`
+        : '❓ Unknown'
+    },
+    {
+      label: '— Recently broken',
+      value: working_status
+        ? working_status.recently_broken
+          ? 'Yes'
+          : 'No'
+        : '—',
+      sub: true
+    },
+    {
+      label: '— Timeframe',
+      value:
+        working_status?.timeframe_days != null
+          ? `Last ${working_status.timeframe_days} days`
+          : '—',
+      sub: true
+    },
+    {
+      label: '— Last positive report',
+      value:
+        working_status?.last_positive_report_age != null
+          ? `${working_status.last_positive_report_age} days ago`
+          : '—',
+      sub: true
+    },
+    {
+      label: 'Confidence',
+      value: `${confidence.level} (${confidence.score}/100)`
+    },
+    {
+      label: 'Confidence factors',
+      value: confidence.factors.length > 0 ? confidence.factors.join(', ') : '—'
+    },
+    {
+      label: 'Trend',
+      value:
+        trend.direction === 'unknown'
+          ? '❓ Not enough recent data'
+          : `${trendIcon} ${trend.direction.charAt(0).toUpperCase() + trend.direction.slice(1)}`
+    },
+    {
+      label: '— Recent positive ratio',
+      value: formatPercent(trend.recent_positive_ratio),
+      sub: true
+    },
+    {
+      label: '— Older positive ratio',
+      value: formatPercent(trend.older_positive_ratio),
+      sub: true
+    },
+    {
+      label: 'Freshness',
+      value: `${freshness.label} (${freshness.latest_report_age} days ago)`
+    },
+    {
+      label: 'Stale',
+      value: freshness.is_stale ? 'Yes' : 'No'
+    },
+    {
+      label: 'Total reports',
+      value: stats.total_reports
+    },
+    {
+      label: 'Recent reports',
+      value: stats.recent_reports
+    }
+  ]
+
+  return (
+    <ConfirmModal
+      strTitle=" "
+      strOKButtonText="Close"
+      bAlertDialog
+      onOK={closeModal}
+      onCancel={closeModal}
+      bHideCloseIcon={false}
+    >
+      <style>
+        {`
+          .DialogBody *:focus,
+          .DialogBody *:focus-visible,
+          .ModalPosition *:focus,
+          .ModalPosition *:focus-visible,
+          .ConfirmDialog *:focus,
+          .ConfirmDialog *:focus-visible {
+            outline: none !important;
+            box-shadow: none !important;
+            border-color: transparent !important;
+          }
+        `}
+      </style>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          marginTop: '-32px',
+          marginBottom: '8px'
+        }}
+      >
+        <span style={{ fontSize: '16px', fontWeight: 'bold', color: '#fff' }}>
+          ProtonDB Analysis
+        </span>
+        <a
+          href="https://protondb.schelstraete.org/status"
+          style={{
+            color: '#7ab3f0',
+            fontSize: '11px',
+            textDecoration: 'none',
+            outline: 'none'
+          }}
+          tabIndex={-1}
+          onClick={() =>
+            Navigation.NavigateToExternalWeb(
+              'https://protondb.schelstraete.org/status'
+            )
+          }
+        >
+          protondb.schelstraete.org
+        </a>
+      </div>
+
+      <Focusable
+        style={{ display: 'flex', marginBottom: '8px' }}
+        //@ts-ignore
+        flow-children="row"
+      >
+        <Focusable
+          style={tabStyle(activeTab === 'details')}
+          onClick={() => setActiveTab('details')}
+          onActivate={() => setActiveTab('details')}
+        >
+          Details
+        </Focusable>
+        <Focusable
+          style={tabStyle(activeTab === 'reports')}
+          onClick={() => setActiveTab('reports')}
+          onActivate={() => setActiveTab('reports')}
+        >
+          Reports
+        </Focusable>
+        <Focusable
+          style={tabStyle(activeTab === 'versions')}
+          onClick={() => setActiveTab('versions')}
+          onActivate={() => setActiveTab('versions')}
+        >
+          Versions
+        </Focusable>
+        <Focusable
+          style={tabStyle(activeTab === 'settings')}
+          onClick={() => setActiveTab('settings')}
+          onActivate={() => setActiveTab('settings')}
+        >
+          Settings
+        </Focusable>
+      </Focusable>
+
+      {activeTab === 'details' && (
+        <ScrollPanelGroup>
+          <ScrollPanel>
+            <Focusable
+              style={{ padding: '4px' }}
+              //@ts-ignore
+              flow-children="column"
+            >
+              {rows.map((row, i) => (
+                <Focusable
+                  key={row.label}
+                  onFocus={(e: React.FocusEvent) =>
+                    (e.target as HTMLElement).scrollIntoView({
+                      behavior: 'smooth',
+                      block: 'nearest'
+                    })
+                  }
+                >
+                  <Row
+                    label={row.label}
+                    value={row.value}
+                    even={i % 2 === 0}
+                    sub={row.sub}
+                  />
+                </Focusable>
+              ))}
+            </Focusable>
+          </ScrollPanel>
+        </ScrollPanelGroup>
+      )}
+
+      {activeTab === 'reports' && (
+        <div style={{ padding: '4px' }}>
+          <div
+            style={{
+              fontSize: '12px',
+              color: '#888',
+              marginBottom: '8px',
+              textAlign: 'center'
+            }}
+          >
+            {gameName} — Last 5 years
+          </div>
+          {historyLoading ? (
+            <div
+              style={{
+                color: '#888',
+                textAlign: 'center',
+                padding: '20px 0'
+              }}
+            >
+              Loading chart...
+            </div>
+          ) : history ? (
+            <div style={{ outline: 'none' }} tabIndex={-1}>
+              <ReportChart months={history.months} />
+            </div>
+          ) : null}
+
+          <div
+            style={{
+              borderTop: '1px solid rgba(255,255,255,0.08)',
+              marginTop: '12px',
+              paddingTop: '8px'
+            }}
+          />
+
+          {reportsLoading ? (
+            <div
+              style={{
+                color: '#888',
+                textAlign: 'center',
+                padding: '40px 0'
+              }}
+            >
+              Loading...
+            </div>
+          ) : recentReports?.reports?.length ? (
+            <ScrollPanelGroup>
+              <ScrollPanel>
+                <Focusable
+                  style={{ padding: '4px' }}
+                  //@ts-ignore
+                  flow-children="column"
+                >
+                  {recentReports.reports
+                    .slice(0, visibleReports)
+                    .map((report, i) => (
+                      <Focusable
+                        key={i}
+                        onFocus={(e: React.FocusEvent) =>
+                          (e.target as HTMLElement).scrollIntoView({
+                            behavior: 'smooth',
+                            block: 'nearest'
+                          })
+                        }
+                      >
+                        <ReportCard report={report} />
+                      </Focusable>
+                    ))}
+                  {visibleReports < recentReports.reports.length && (
+                    <Focusable
+                      style={{
+                        textAlign: 'center',
+                        padding: '10px 0',
+                        fontSize: '12px',
+                        color: '#7ab3f0',
+                        cursor: 'pointer',
+                        background: 'rgba(122,179,240,0.08)',
+                        borderRadius: '6px',
+                        marginTop: '4px'
+                      }}
+                      onClick={() =>
+                        setVisibleReports((p) =>
+                          Math.min(
+                            p + REPORTS_PAGE_SIZE,
+                            recentReports.reports.length
+                          )
+                        )
+                      }
+                      onActivate={() =>
+                        setVisibleReports((p) =>
+                          Math.min(
+                            p + REPORTS_PAGE_SIZE,
+                            recentReports.reports.length
+                          )
+                        )
+                      }
+                    >
+                      Show more ({recentReports.reports.length - visibleReports}{' '}
+                      remaining)
+                    </Focusable>
+                  )}
+                </Focusable>
+              </ScrollPanel>
+            </ScrollPanelGroup>
+          ) : (
+            <div
+              style={{
+                color: '#888',
+                textAlign: 'center',
+                padding: '40px 0'
+              }}
+            >
+              No recent reports available
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'versions' && (
+        <div style={{ padding: '4px' }}>
+          {versionsLoading ? (
+            <div
+              style={{
+                color: '#888',
+                textAlign: 'center',
+                padding: '40px 0'
+              }}
+            >
+              Loading...
+            </div>
+          ) : versionsData?.versions?.length ? (
+            <ScrollPanelGroup>
+              <ScrollPanel>
+                <Focusable
+                  style={{ padding: '4px' }}
+                  //@ts-ignore
+                  flow-children="column"
+                >
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      color: '#888',
+                      marginBottom: '8px',
+                      textAlign: 'center'
+                    }}
+                  >
+                    {versionsData.total_reports} reports across all versions
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: '10px',
+                      color: '#666',
+                      padding: '0 12px 4px',
+                      marginBottom: '2px',
+                      borderBottom: '1px solid rgba(255,255,255,0.06)'
+                    }}
+                  >
+                    <span>Version</span>
+                    <span>% positive ratings</span>
+                  </div>
+                  {versionsData.versions.map((stat) => (
+                    <Focusable
+                      key={stat.version}
+                      onFocus={(e: React.FocusEvent) =>
+                        (e.target as HTMLElement).scrollIntoView({
+                          behavior: 'smooth',
+                          block: 'nearest'
+                        })
+                      }
+                    >
+                      <VersionRow stat={stat} appId={appId} />
+                    </Focusable>
+                  ))}
+                  {!versionsData.versions.some((s) => isCurrent(s.version)) && (
+                    <div
+                      style={{
+                        fontSize: '11px',
+                        color: '#facc15',
+                        textAlign: 'center',
+                        padding: '8px 0',
+                        marginTop: '4px'
+                      }}
+                    >
+                      No reports found for Proton {CURRENT_PROTON_MAJOR} (Steam
+                      Deck default)
+                    </div>
+                  )}
+                </Focusable>
+              </ScrollPanel>
+            </ScrollPanelGroup>
+          ) : (
+            <div
+              style={{
+                color: '#888',
+                textAlign: 'center',
+                padding: '40px 0'
+              }}
+            >
+              No report data available
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'settings' && (
+        <div style={{ padding: '4px' }}>
+          {settingsLoading ? (
+            <div
+              style={{
+                color: '#888',
+                textAlign: 'center',
+                padding: '40px 0'
+              }}
+            >
+              Loading...
+            </div>
+          ) : settingsData?.launch_options?.length ? (
+            <ScrollPanelGroup>
+              <ScrollPanel>
+                <Focusable
+                  style={{ padding: '4px' }}
+                  //@ts-ignore
+                  flow-children="column"
+                >
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      color: '#888',
+                      marginBottom: '8px',
+                      textAlign: 'center'
+                    }}
+                  >
+                    {t('settingsTabCount')
+                      .replace(
+                        '{with}',
+                        String(settingsData.reports_with_settings ?? 0)
+                      )
+                      .replace(
+                        '{total}',
+                        String(settingsData.total_reports ?? 0)
+                      )}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '10px',
+                      color: '#666',
+                      marginBottom: '4px',
+                      textAlign: 'center',
+                      lineHeight: '1.4'
+                    }}
+                  >
+                    {t('settingsTabHint')}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '10px',
+                      color: '#555',
+                      marginBottom: '8px',
+                      textAlign: 'center',
+                      fontFamily: 'monospace'
+                    }}
+                  >
+                    {t('settingsTabExample')}
+                  </div>
+                  {settingsData.launch_options.map((opt, i) => (
+                    <Focusable
+                      key={`${opt.option}-${opt.value}-${i}`}
+                      onFocus={(e: React.FocusEvent) =>
+                        (e.target as HTMLElement).scrollIntoView({
+                          behavior: 'smooth',
+                          block: 'nearest'
+                        })
+                      }
+                    >
+                      <SettingRow opt={opt} appId={appId} />
+                    </Focusable>
+                  ))}
+                </Focusable>
+              </ScrollPanel>
+            </ScrollPanelGroup>
+          ) : (
+            <div
+              style={{
+                color: '#888',
+                textAlign: 'center',
+                padding: '40px 0'
+              }}
+            >
+              {t('settingsTabEmpty')}
+            </div>
+          )}
+        </div>
+      )}
+    </ConfirmModal>
+  )
+}

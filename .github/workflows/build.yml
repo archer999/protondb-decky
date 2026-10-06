@@ -1,39 +1,65 @@
-name: Build Decky Plugin
+name: Build and Release ProtonDB Badges
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    push:
+        tags:
+            - 'v*'
+    pull_request:
+        branches: ['main']
+
+    # Allows you to run this workflow manually from the Actions tab
+    workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
 
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+            - name: Setup Node
+              uses: actions/setup-node@v4
+              with:
+                  node-version: '18'
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 12.9.1
+            - name: Install Dependencies
+              run: npm install
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
+            - name: build
+              run: npm run build
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+            - name: prepare release package
+              run: |
+                  rm -rf ./release
+                  mkdir -p ./release/dist
+                  cp LICENSE ./release/
+                  cp main.py ./release/
+                  cp settings.py ./release/
+                  cp package.json ./release/
+                  cp plugin.json ./release/
+                  cp ./dist/index.js ./release/dist/
+            - name: Upload package
+              uses: actions/upload-artifact@v4
+              with:
+                  name: protondb-decky
+                  path: ./release/*
+    release:
+        needs: build
+        if: startsWith(github.ref, 'refs/tags/v')
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
 
-      - name: Build plugin
-        run: pnpm build
+            - uses: actions/download-artifact@v4
+              with:
+                  name: protondb-decky
+                  path: protondb-decky
 
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: protondb-decky-dist
-          path: dist/
-          if-no-files-found: error
+            - name: zip/tar release
+              run: |
+                  zip -r protondb-decky.zip protondb-decky/*
+                  tar -czvf protondb-decky.tar.gz protondb-decky
+            - name: Create a release
+              uses: ncipollo/release-action@v1
+              with:
+                  artifacts: 'protondb-decky.zip,protondb-decky.tar.gz'
+                  allowUpdates: true

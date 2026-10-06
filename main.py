@@ -49,7 +49,7 @@ class Plugin:
             os_release_path = '/etc/os-release'
             if os.path.exists(os_release_path):
                 try:
-                    with open(os_release_path, 'r') as f:
+                    with open(os_release_path, 'r', encoding='utf-8') as f:
                         for line in f:
                             if line.startswith('NAME='):
                                 os_name = line.split('=')[1].strip().strip('"')
@@ -74,3 +74,4 @@ class Plugin:
                 'os_version': 'unknown',
                 'decky_version': 'unknown'
             }
+

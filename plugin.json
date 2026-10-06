@@ -1,11 +1,11 @@
 {
   "name": "ProtonDB Badges",
-  "author": "OMGDuke",
+  "author": "Schelstraete Bart",
   "flags": [],
   "api_version": 2,
   "publish": {
     "tags": ["protondb"],
     "description": "Display tappable ProtonDB badges on your game pages",
-    "image": "https://raw.githubusercontent.com/OMGDuke/protondb-decky/main/assets/publish_image.png"
+    "image": "https://raw.githubusercontent.com/bschelst/protondb-decky/main/assets/publish_image.png"
   }
 }

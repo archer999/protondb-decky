@@ -16,7 +16,6 @@ const useAppId = () => {
 
   useEffect(() => {
     let ignore = false
-
     async function getNonSteamAppId(gameName: string | undefined) {
       if (ignore || !gameName) {
         setAppId(undefined)
@@ -29,10 +28,10 @@ const useAppId = () => {
           {
             method: 'GET'
           }
-        )
+        );
 
         if (res.status === 200) {
-          const options = (await res.json()) as {
+          const options = await res.json() as {
             appid: string
             name: string
           }[]
@@ -44,33 +43,23 @@ const useAppId = () => {
           return
         }
       } catch (error) {
-        console.error(error)
+       console.error(error);
       }
-
       setAppId(undefined)
     }
-
-    if (!pathId) {
-      setAppId(undefined)
-      return
-    }
-
     const appDetails = appStore.GetAppOverviewByGameID(parseInt(pathId))
     const isSteamGame = Boolean(
       appTypes[appDetails?.app_type as keyof typeof appTypes]
     )
-
     if (isSteamGame) {
       setAppId(pathId)
     } else {
       getNonSteamAppId(appDetails?.display_name)
     }
-
     return () => {
       ignore = true
     }
   }, [])
-
   return appId
 }
 

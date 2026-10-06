@@ -2,15 +2,36 @@ import {
   ButtonItem,
   ButtonItemProps,
   DropdownItem,
+  Focusable,
+  Navigation,
   PanelSection,
   PanelSectionProps,
-  PanelSectionRow
+  PanelSectionRow,
+  showModal,
+  ToggleField
 } from '@decky/ui'
-import React, { FC, ReactNode } from 'react'
+import { toaster } from '@decky/api'
+import React, { FC, ReactNode, useState } from 'react'
+import {
+  FaChartBar,
+  FaChevronDown,
+  FaChevronUp,
+  FaGithub,
+  FaGlobe,
+  FaLink,
+  FaQuestionCircle,
+  FaShoppingCart,
+  FaStar,
+  FaTrash
+} from 'react-icons/fa'
 import { clearCache } from '../../cache/protobDbCache'
+import { PLUGIN_VERSION } from '../../constants'
 import useTranslations from '../../hooks/useTranslations'
 import { useSettings } from '../../hooks/useSettings'
 import Spinner from '../spinner'
+import HelpModal from '../helpModal'
+
+const GITHUB_URL = 'https://github.com/bschelst/protondb-decky'
 
 type ExtendedPanelSectionProps = PanelSectionProps & {
   children: ReactNode
@@ -30,9 +51,59 @@ type ExtendedButtonItemProps = ButtonItemProps & {
 
 const DeckButtonItem = ButtonItem as FC<ExtendedButtonItemProps>
 
+const CollapsibleSection: FC<{
+  title: string
+  icon: ReactNode
+  defaultExpanded?: boolean
+  children: ReactNode
+}> = ({ title, icon, defaultExpanded = false, children }) => {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+  const [isFocused, setIsFocused] = useState(false)
+
+  return (
+    <div style={{ marginTop: '8px' }}>
+      <Focusable
+        onActivate={() => setIsExpanded(!isExpanded)}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px',
+          cursor: 'pointer',
+          borderRadius: '4px',
+          background: isFocused ? 'rgba(207, 181, 59, 0.15)' : 'transparent',
+          transition: 'background 0.2s ease'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {icon}
+          <span>{title}</span>
+        </div>
+        {isExpanded ? <FaChevronUp size={12} /> : <FaChevronDown size={12} />}
+      </Focusable>
+
+      {isExpanded && <div style={{ paddingLeft: '4px' }}>{children}</div>}
+    </div>
+  )
+}
+
 export default function Index() {
-  const { settings, setSize, setPosition, setLabelOnHover, loading } =
-    useSettings()
+  const {
+    settings,
+    setSize,
+    setPosition,
+    setLabelOnHover,
+    setDisableSubmit,
+    setEnableLibraryBadge,
+    setEnableStoreBadge,
+    setShowAnalysisButton,
+    setRoundedCorners,
+    setShowLibraryIcons,
+    setLibraryIconPosition,
+    loading
+  } = useSettings()
   const t = useTranslations()
 
   const sizeOptions = [
@@ -43,7 +114,11 @@ export default function Index() {
 
   const positionOptions = [
     { data: 0, label: t('positionTopLeft'), value: 'tl' },
-    { data: 1, label: t('positionTopRight'), value: 'tr' }
+    { data: 1, label: t('positionTopMiddle'), value: 'tm' },
+    { data: 2, label: t('positionTopRight'), value: 'tr' },
+    { data: 3, label: t('positionBottomLeft'), value: 'bl' },
+    { data: 4, label: t('positionBottomMiddle'), value: 'bm' },
+    { data: 5, label: t('positionBottomRight'), value: 'br' }
   ] as const
 
   const hoverTypeOptions = [
@@ -51,6 +126,13 @@ export default function Index() {
     { data: 1, label: t('sizeSmall'), value: 'small' },
     { data: 2, label: t('sizeRegular'), value: 'regular' }
   ] as const
+
+  const libraryIconPositionOptions = [
+    { data: 0, label: t('positionBottomLeft'), value: 'bl' },
+    { data: 1, label: t('positionTopLeft'), value: 'tl' },
+    { data: 2, label: t('positionTopRight'), value: 'tr' }
+  ] as const
+
   if (loading) {
     return (
       <div
@@ -67,7 +149,27 @@ export default function Index() {
   }
   return (
     <div>
-      <DeckPanelSection title={t('settings')}>
+      <DeckPanelSection title={t('sectionLibrary')}>
+        <DeckPanelSectionRow>
+          <ToggleField
+            label={t('enableLibraryBadge')}
+            description={t('enableLibraryBadgeDesc')}
+            checked={settings.enableLibraryBadge}
+            onChange={(checked: boolean) => {
+              setEnableLibraryBadge(checked)
+            }}
+          />
+        </DeckPanelSectionRow>
+        <DeckPanelSectionRow>
+          <ToggleField
+            label={t('disableSubmit')}
+            description={t('disableSubmitDesc')}
+            checked={settings.disableSubmit}
+            onChange={(checked: boolean) => {
+              setDisableSubmit(checked)
+            }}
+          />
+        </DeckPanelSectionRow>
         <DeckPanelSectionRow>
           <DropdownItem
             label={t('badgeSize')}
@@ -135,19 +237,175 @@ export default function Index() {
             }}
           />
         </DeckPanelSectionRow>
+        <DeckPanelSectionRow>
+          <ToggleField
+            label={t('roundedCorners')}
+            description={t('roundedCornersDesc')}
+            checked={settings.roundedCorners === true}
+            onChange={(checked: boolean) => {
+              setRoundedCorners(checked)
+            }}
+          />
+        </DeckPanelSectionRow>
       </DeckPanelSection>
-      <DeckPanelSection title={t('caching')}>
+
+      <CollapsibleSection
+        title={t('sectionStore')}
+        icon={<FaShoppingCart size={14} />}
+      >
+        <DeckPanelSectionRow>
+          <ToggleField
+            label={t('enableStoreBadge')}
+            description={t('enableStoreBadgeDesc')}
+            checked={settings.enableStoreBadge}
+            onChange={(checked: boolean) => {
+              setEnableStoreBadge(checked)
+            }}
+          />
+        </DeckPanelSectionRow>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title={t('sectionEnhancedFeatures')}
+        icon={<FaStar size={14} />}
+      >
+        <DeckPanelSectionRow>
+          <ToggleField
+            label={t('showAnalysisButton')}
+            description={t('showAnalysisButtonDesc')}
+            checked={settings.showAnalysisButton !== false}
+            onChange={(checked: boolean) => {
+              setShowAnalysisButton(checked)
+            }}
+          />
+        </DeckPanelSectionRow>
+        {settings.showAnalysisButton !== false && (
+          <DeckPanelSectionRow>
+            <ToggleField
+              label={t('showLibraryIcons')}
+              description={t('showLibraryIconsDesc')}
+              checked={settings.showLibraryIcons === true}
+              onChange={(checked: boolean) => {
+                setShowLibraryIcons(checked)
+              }}
+            />
+          </DeckPanelSectionRow>
+        )}
+        {settings.showAnalysisButton !== false &&
+          settings.showLibraryIcons === true && (
+            <DeckPanelSectionRow>
+              <DropdownItem
+                label={t('libraryIconPosition')}
+                description={t('libraryIconPositionDesc')}
+                menuLabel={t('libraryIconPosition')}
+                rgOptions={libraryIconPositionOptions.map((o) => ({
+                  data: o.data,
+                  label: o.label
+                }))}
+                selectedOption={
+                  libraryIconPositionOptions.find(
+                    (o) => o.value === (settings.libraryIconPosition || 'bl')
+                  )?.data || 0
+                }
+                onChange={(newVal: { data: number; label: string }) => {
+                  const newPos =
+                    libraryIconPositionOptions.find(
+                      (o) => o.data === newVal.data
+                    )?.value || 'bl'
+                  setLibraryIconPosition(newPos)
+                }}
+              />
+            </DeckPanelSectionRow>
+          )}
+      </CollapsibleSection>
+
+      <CollapsibleSection title={t('caching')} icon={<FaTrash size={14} />}>
         <DeckPanelSectionRow>
           <DeckButtonItem
             label={t('clearCacheLabel')}
             bottomSeparator="none"
             layout="below"
-            onClick={() => clearCache()}
+            onClick={() => {
+              clearCache()
+              toaster.toast({
+                title: 'ProtonDB Badges',
+                body: t('clearCacheSuccess'),
+                duration: 3000
+              })
+            }}
           >
             {t('clearCache')}
           </DeckButtonItem>
         </DeckPanelSectionRow>
-      </DeckPanelSection>
+      </CollapsibleSection>
+
+      <CollapsibleSection title={t('sectionLinks')} icon={<FaLink size={14} />}>
+        <DeckPanelSectionRow>
+          <DeckButtonItem
+            bottomSeparator="standard"
+            layout="below"
+            onClick={() => showModal(<HelpModal />)}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <FaQuestionCircle size={20} />
+              <span>{t('helpButton')}</span>
+            </div>
+          </DeckButtonItem>
+        </DeckPanelSectionRow>
+        <DeckPanelSectionRow>
+          <DeckButtonItem
+            bottomSeparator="standard"
+            layout="below"
+            onClick={() =>
+              Navigation.NavigateToExternalWeb('https://www.protondb.com')
+            }
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <FaGlobe size={20} />
+              <span>ProtonDB</span>
+            </div>
+          </DeckButtonItem>
+        </DeckPanelSectionRow>
+        <DeckPanelSectionRow>
+          <DeckButtonItem
+            bottomSeparator="standard"
+            layout="below"
+            onClick={() =>
+              Navigation.NavigateToExternalWeb(
+                'https://protondb.schelstraete.org/status'
+              )
+            }
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <FaChartBar size={20} />
+              <span>ProtonDB Analysis</span>
+            </div>
+          </DeckButtonItem>
+        </DeckPanelSectionRow>
+        <DeckPanelSectionRow>
+          <DeckButtonItem
+            bottomSeparator="none"
+            layout="below"
+            onClick={() => Navigation.NavigateToExternalWeb(GITHUB_URL)}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <FaGithub size={20} />
+              <span>GitHub</span>
+            </div>
+          </DeckButtonItem>
+        </DeckPanelSectionRow>
+      </CollapsibleSection>
+
+      <div
+        style={{
+          textAlign: 'center',
+          padding: '12px 0 4px',
+          fontSize: '12px',
+          opacity: 0.5
+        }}
+      >
+        ProtonDB Badges v{PLUGIN_VERSION}
+      </div>
     </div>
   )
 }

@@ -7,11 +7,24 @@ lib-cov
 *.pid
 *.gz
 *.swp
-
+*rollup*
+*node_modules*
+*.git
+*.vscode*
+package.sh
+*loc*
+!pnpm-lock.yaml
 pids
 logs
 results
 tmp
+
+
+# Le Editor
+.le
+
+# Local deliveries in syntax CL[datetime]
+CL*
 
 # Coverage reports
 coverage
@@ -43,3 +56,9 @@ yalc.lock
 
 # Ignore output folder
 backend/out
+deliverables/
+
+# Local release script
+release.sh
+ISSUES.txt
+PUSH_TO_DECKY_PLUGIN.txt
