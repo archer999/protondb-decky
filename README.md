@@ -1,20 +1,20 @@
 # ProtonDB Badges for Steam Deck
 
-It’s basically the same thing, but with fixes and updated for the latest Steam OS / Steam Deck OS.
+A personal maintained build of the ProtonDB Decky plugin, updated for newer Steam Deck and SteamOS UI behavior.
 
-This plugin still adds the ProtonDB badge to Steam game pages and links it to the ProtonDB page for that game.
+This plugin adds a ProtonDB badge to Steam game pages and links it to the ProtonDB page for that game.
 
 ![ProtonDB Badges](./assets/screenshot.jpg)
 
 ## What changed
 
-This version is updated for newer Steam Deck and SteamOS layouts, with fixes for the latest UI changes so it still works properly.
+This build keeps the original functionality while adding compatibility fixes for newer Decky Loader and Steam Deck / SteamOS UI layouts.
 
 ## Requirements
 
 - Steam Deck or SteamOS machine
 - Decky Loader installed
-- built locally for personal use
+- Build locally for personal use
 
 ## Install
 
@@ -25,9 +25,13 @@ corepack pnpm install
 corepack pnpm build
 ```
 
+## Credits
+
+- Original plugin concept and work: OMGDuke
+- Compatibility updates adapted from: bschelst/protondb-decky
+- This repository is a personal maintained fork for newer Decky Loader and Steam Deck compatibility
+
 ## Notes
 
-This is a personal fork, kept working for the latest Steam Deck / SteamOS versions with the same core functionality and compatibility fixes.
-
-Original plugin creator credit: OMGDuke / ProtonDB Badges original project.
+This project is kept working for current Steam Deck / SteamOS behavior while preserving the original plugin purpose and user experience.
 
